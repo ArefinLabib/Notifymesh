@@ -7,10 +7,6 @@ export interface NotificationJobPayload {
   content: string;
   enqueuedAt: number;
 }
-
-/**
- * Publishes a notification job to RabbitMQ's Main Queue with disk persistence.
- */
 export async function publishNotification(payload: NotificationJobPayload): Promise<void> {
   const channel = getChannel();
   const messageBuffer = Buffer.from(JSON.stringify(payload));
