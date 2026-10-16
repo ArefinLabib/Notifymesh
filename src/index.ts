@@ -1,15 +1,10 @@
 import 'dotenv/config';
-import express from 'express';
+import { app } from './app.js';
 import { redis } from './config/redis.js';
 import { initRabbitMQ } from './config/rabbitmq.js';
 import { startDispatchWorker } from './workers/dispatchWorker.js';
-import notificationRoutes from './api/routes.js';
 
-const app = express();
 const PORT = process.env.PORT || 3000;
-
-app.use(express.json());
-app.use('/api', notificationRoutes);
 
 async function bootstrap() {
   try {

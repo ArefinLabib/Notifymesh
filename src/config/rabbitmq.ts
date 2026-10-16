@@ -83,3 +83,22 @@ export function getChannel(): ConfirmChannel {
   }
   return confirmChannel;
 }
+
+export async function closeRabbitMQ(): Promise<void> {
+  if (confirmChannel) {
+    try {
+      await confirmChannel.close();
+    } catch {
+      // Channel already closed
+    }
+    confirmChannel = null;
+  }
+  if (connection) {
+    try {
+      await connection.close();
+    } catch {
+      // Connection already closed
+    }
+    connection = null;
+  }
+}

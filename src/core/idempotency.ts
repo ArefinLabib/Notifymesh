@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { redis } from '../config/redis.js';
 
-export type IdempotencyStatus = 'STARTED' | 'QUEUED' | 'DISPATCHED';
+export type IdempotencyStatus = 'STARTED' | 'QUEUED' | 'DISPATCHED' | 'FAILED';
 
 export interface IdempotencyRecord {
   status: IdempotencyStatus;
@@ -9,6 +9,7 @@ export interface IdempotencyRecord {
   statusCode?: number;
   responseBody?: Record<string, unknown>;
   createdAt: number;
+  error?: string;
 }
 
 const IDEMPOTENCY_TTL_SECONDS = 60 * 60 * 24;
@@ -71,12 +72,26 @@ export class IdempotencyService {
     responseBody: Record<string, unknown>
   ): Promise<void> {
     const key = this.getRedisKey(idempotencyKey);
+    const existingRaw = await redis.get(key);
+
+    let status: IdempotencyStatus = 'QUEUED';
+    let error: string | undefined;
+
+    if (existingRaw) {
+      const existing = JSON.parse(existingRaw) as IdempotencyRecord;
+      if (existing.status === 'DISPATCHED' || existing.status === 'FAILED') {
+        status = existing.status;
+        error = existing.error;
+      }
+    }
+
     const updatedRecord: IdempotencyRecord = {
-      status: 'QUEUED',
+      status,
       payloadHash,
       statusCode,
       responseBody,
       createdAt: Date.now(),
+      ...(error ? { error } : {}),
     };
 
     await redis.set(key, JSON.stringify(updatedRecord), 'KEEPTTL');
@@ -102,6 +117,27 @@ export class IdempotencyService {
 
     const record = JSON.parse(existingRaw) as IdempotencyRecord;
     return record.status === 'DISPATCHED';
+  }
+
+  // Called by the RabbitMQ Worker when all retries are exhausted before routing to DLQ.
+  public async markFailed(idempotencyKey: string, reason: string): Promise<void> {
+    const key = this.getRedisKey(idempotencyKey);
+    const existingRaw = await redis.get(key);
+
+    if (existingRaw) {
+      const record = JSON.parse(existingRaw) as IdempotencyRecord;
+      record.status = 'FAILED';
+      record.error = reason;
+      await redis.set(key, JSON.stringify(record), 'KEEPTTL');
+    }
+  }
+
+  // Queries the current idempotency record for status polling.
+  public async getRecord(idempotencyKey: string): Promise<IdempotencyRecord | null> {
+    const key = this.getRedisKey(idempotencyKey);
+    const existingRaw = await redis.get(key);
+    if (!existingRaw) return null;
+    return JSON.parse(existingRaw) as IdempotencyRecord;
   }
 
   public async releaseLock(idempotencyKey: string): Promise<void> {

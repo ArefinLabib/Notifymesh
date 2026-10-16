@@ -24,8 +24,6 @@ export async function dispatchNotificationController(req: Request, res: Response
       enqueuedAt: Date.now(),
     };
 
-    await publishNotification(jobPayload);
-
     const responseBody = {
       status: 'accepted',
       message: 'Notification queued for dispatch.',
@@ -39,6 +37,8 @@ export async function dispatchNotificationController(req: Request, res: Response
       responseBody
     );
 
+    await publishNotification(jobPayload);
+
     return res.status(202).json(responseBody);
   } catch (err) {
     console.error('[Controller Dispatch Error]:', err);
@@ -50,6 +50,41 @@ export async function dispatchNotificationController(req: Request, res: Response
     return res.status(500).json({
       error: 'Internal Server Error',
       message: 'Failed to enqueue notification. Please retry with the same Idempotency-Key.',
+    });
+  }
+}
+
+export async function getNotificationStatusController(req: Request, res: Response) {
+  const idempotencyKey = req.params.idempotencyKey as string;
+
+  if (!idempotencyKey) {
+    return res.status(400).json({
+      error: 'Bad Request',
+      message: 'Missing required idempotencyKey parameter.',
+    });
+  }
+
+  try {
+    const record = await idempotencyService.getRecord(idempotencyKey);
+
+    if (!record) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: `No notification found for Idempotency-Key: ${idempotencyKey}`,
+      });
+    }
+
+    return res.status(200).json({
+      idempotencyKey,
+      status: record.status,
+      createdAt: record.createdAt,
+      ...(record.error ? { error: record.error } : {}),
+    });
+  } catch (err) {
+    console.error('[Controller Status Query Error]:', err);
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to retrieve notification status.',
     });
   }
 }

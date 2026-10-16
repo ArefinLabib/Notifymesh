@@ -4,15 +4,15 @@ import { NotificationJobPayload } from '../core/publisher.js';
 import { idempotencyService } from '../core/idempotency.js';
 import { mockProvider } from '../providers/mockProvider.js';
 
-const MAX_RETRIES = Number(process.env.MAX_RETRIES ?? 3);
-const BASE_DELAY_MS = Number(process.env.BASE_DELAY_MS ?? 1000);
+const getMaxRetries = () => Number(process.env.MAX_RETRIES ?? 3);
+const getBaseDelayMs = () => Number(process.env.BASE_DELAY_MS ?? 1000);
 
 export async function startDispatchWorker(): Promise<void> {
   const channel = getChannel();
 
   await channel.prefetch(5);
 
-  console.log(`[Worker] Listening on ${MQ_TOPOLOGY.MAIN_QUEUE} (Max Retries: ${MAX_RETRIES})`);
+  console.log(`[Worker] Listening on ${MQ_TOPOLOGY.MAIN_QUEUE} (Max Retries: ${getMaxRetries()})`);
 
   await channel.consume(
     MQ_TOPOLOGY.MAIN_QUEUE,
@@ -44,12 +44,15 @@ export async function startDispatchWorker(): Promise<void> {
         const errorMessage = err instanceof Error ? err.message : 'Unknown provider error';
 
         // Evaluate Retry vs Dead-Letter Queue (DLQ)
-        if (currentRetryCount < MAX_RETRIES) {
+        const maxRetries = getMaxRetries();
+        const baseDelayMs = getBaseDelayMs();
+
+        if (currentRetryCount < maxRetries) {
           const nextRetryCount = currentRetryCount + 1;
-          const backoffDelayMs = BASE_DELAY_MS * Math.pow(2, nextRetryCount);
+          const backoffDelayMs = baseDelayMs * Math.pow(2, nextRetryCount);
 
           console.warn(
-            `[Worker] Dispatch failed for ${payload.idempotencyKey} (Attempt ${nextRetryCount}/${MAX_RETRIES}). Retrying in ${backoffDelayMs}ms... Reason: ${errorMessage}`
+            `[Worker] Dispatch failed for ${payload.idempotencyKey} (Attempt ${nextRetryCount}/${maxRetries}). Retrying in ${backoffDelayMs}ms... Reason: ${errorMessage}`
           );
 
           // Publish to Wait Queue with per-message TTL expiration
@@ -72,8 +75,9 @@ export async function startDispatchWorker(): Promise<void> {
           channel.ack(msg);
         } else {
           console.error(
-            `[Worker] Retries exhausted (${MAX_RETRIES}/${MAX_RETRIES}) for ${payload.idempotencyKey}. Routing to DLQ! Last error: ${errorMessage}`
+            `[Worker] Retries exhausted (${maxRetries}/${maxRetries}) for ${payload.idempotencyKey}. Routing to DLQ! Last error: ${errorMessage}`
           );
+          await idempotencyService.markFailed(payload.idempotencyKey, errorMessage);
           channel.nack(msg, false, false);
         }
       }
